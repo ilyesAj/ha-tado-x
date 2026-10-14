@@ -197,3 +197,39 @@ get_day_report:
       example: "2026-10-13"
       selector:
         text:
+
+get_holiday_mode:
+  name: Get holiday mode
+  description: >-
+    Read the home's holiday mode settings (enabled, start/end dates and room
+    settings). Returns the settings as a response. Requires an Auto-Assist
+    (Premium) subscription.
+
+set_holiday_mode:
+  name: Set holiday mode
+  description: >-
+    Enable or disable holiday mode and optionally set its start/end date.
+    Requires an Auto-Assist (Premium) subscription. Dates are ISO-8601
+    date-time strings.
+  fields:
+    enabled:
+      name: Enabled
+      description: Turn holiday mode on (true) or off (false).
+      required: true
+      example: true
+      selector:
+        boolean:
+    start_date:
+      name: Start date
+      description: ISO-8601 start date-time (e.g. 2026-12-20T08:00:00Z). Optional.
+      required: false
+      example: "2026-12-20T08:00:00Z"
+      selector:
+        text:
+    end_date:
+      name: End date
+      description: ISO-8601 end date-time (e.g. 2027-01-05T20:00:00Z). Optional.
+      required: false
+      example: "2027-01-05T20:00:00Z"
+      selector:
+        text:

@@ -63,6 +63,10 @@ SERVICE_GET_DAY_REPORT: Final = "get_day_report"
 ATTR_DAY_TYPE: Final = "day_type"
 ATTR_SCHEDULE: Final = "schedule"
 
+SERVICE_GET_HOLIDAY_MODE: Final = "get_holiday_mode"
+SERVICE_SET_HOLIDAY_MODE: Final = "set_holiday_mode"
+ATTR_ENABLED: Final = "enabled"
+
 DAY_TYPE_OPTIONS: Final = [
     "MONDAY",
     "TUESDAY",
@@ -135,6 +139,16 @@ SERVICE_GET_DAY_REPORT_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_ENTITY_ID): cv.entity_id,
         vol.Optional(ATTR_DATE): cv.string,
+    }
+)
+
+SERVICE_GET_HOLIDAY_MODE_SCHEMA = vol.Schema({})
+
+SERVICE_SET_HOLIDAY_MODE_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_ENABLED): cv.boolean,
+        vol.Optional(ATTR_START_DATE): cv.string,
+        vol.Optional(ATTR_END_DATE): cv.string,
     }
 )
 
@@ -477,6 +491,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "summary": summarize_day_report(report),
         }
 
+    async def async_get_holiday_mode(call: ServiceCall) -> dict[str, Any]:
+        """Return the current holiday mode settings."""
+        try:
+            return await coordinator.api.get_holiday_mode()
+        except TadoXApiError as err:
+            raise HomeAssistantError(f"Failed to get holiday mode: {err}") from err
+
+    async def async_set_holiday_mode(call: ServiceCall) -> None:
+        """Enable/disable holiday mode and optionally set its date range."""
+        try:
+            await coordinator.api.set_holiday_mode(
+                enabled=call.data[ATTR_ENABLED],
+                start_date=call.data.get(ATTR_START_DATE),
+                end_date=call.data.get(ATTR_END_DATE),
+            )
+            await coordinator.async_request_refresh()
+            _LOGGER.info("Holiday mode set to %s", call.data[ATTR_ENABLED])
+        except TadoXApiError as err:
+            raise HomeAssistantError(f"Failed to set holiday mode: {err}") from err
+
     # Register schedule / historic data services (only once per integration)
     if not hass.services.has_service(DOMAIN, SERVICE_GET_SCHEDULE):
         hass.services.async_register(
@@ -502,6 +536,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             async_get_day_report,
             schema=SERVICE_GET_DAY_REPORT_SCHEMA,
             supports_response=SupportsResponse.ONLY,
+        )
+
+    if not hass.services.has_service(DOMAIN, SERVICE_GET_HOLIDAY_MODE):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_GET_HOLIDAY_MODE,
+            async_get_holiday_mode,
+            schema=SERVICE_GET_HOLIDAY_MODE_SCHEMA,
+            supports_response=SupportsResponse.ONLY,
+        )
+
+    if not hass.services.has_service(DOMAIN, SERVICE_SET_HOLIDAY_MODE):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_SET_HOLIDAY_MODE,
+            async_set_holiday_mode,
+            schema=SERVICE_SET_HOLIDAY_MODE_SCHEMA,
         )
 
     # Create the "Home" device before loading platforms to ensure via_device references work

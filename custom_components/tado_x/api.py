@@ -818,6 +818,57 @@ class TadoXApi:
         )
         return result if isinstance(result, dict) else {}
 
+    # Holiday mode endpoints (Hops API, home settings — Auto-Assist skill)
+    async def get_holiday_mode(self) -> dict[str, Any]:
+        """Get the home's holiday mode settings.
+
+        Returns the settings dict (enabled, active, startDate, endDate,
+        roomSettings, hotWaterSettings) or {} when not configured.
+
+        Raises:
+            TadoXApiError: when unavailable (e.g. no Auto-Assist subscription).
+        """
+        if not self._home_id:
+            raise TadoXApiError("Home ID not set")
+
+        result = await self._request(
+            "GET",
+            f"{TADO_HOPS_API_URL}/homes/{self._home_id}/settings/holidayMode",
+        )
+        return result if isinstance(result, dict) else {}
+
+    async def set_holiday_mode(
+        self,
+        enabled: bool,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> None:
+        """Enable/disable holiday mode and optionally set its date range.
+
+        Read-modify-write so existing room/hot-water settings are preserved.
+        start_date/end_date are ISO-8601 strings.
+        """
+        if not self._home_id:
+            raise TadoXApiError("Home ID not set")
+
+        try:
+            current = await self.get_holiday_mode()
+        except TadoXApiError:
+            current = {}
+
+        body = dict(current)
+        body["enabled"] = enabled
+        if start_date:
+            body["startDate"] = start_date
+        if end_date:
+            body["endDate"] = end_date
+
+        await self._request(
+            "PATCH",
+            f"{TADO_HOPS_API_URL}/homes/{self._home_id}/settings/holidayMode",
+            json_data=body,
+        )
+
     # Running Times endpoints (Minder API)
     async def get_running_times(self, from_date: str, to_date: str) -> dict[str, Any]:
         """Get running times data for heating statistics.
