@@ -24,7 +24,6 @@ from .const import (
     CONF_ENABLE_FLOW_TEMP,
     CONF_ENABLE_MOBILE_DEVICES,
     CONF_ENABLE_RUNNING_TIMES,
-    CONF_ENABLE_SCHEDULE,
     CONF_ENABLE_WEATHER,
     CONF_HAS_AUTO_ASSIST,
     CONF_HOME_ID,
@@ -264,7 +263,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     enable_air_comfort = entry.data.get(CONF_ENABLE_AIR_COMFORT, default_features)
     enable_running_times = entry.data.get(CONF_ENABLE_RUNNING_TIMES, default_features)
     enable_flow_temp = entry.data.get(CONF_ENABLE_FLOW_TEMP, default_features)
-    enable_schedule = entry.data.get(CONF_ENABLE_SCHEDULE, default_features)
 
     # Create coordinator
     coordinator = TadoXDataUpdateCoordinator(
@@ -279,7 +277,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         enable_air_comfort=enable_air_comfort,
         enable_running_times=enable_running_times,
         enable_flow_temp=enable_flow_temp,
-        enable_schedule=enable_schedule,
     )
 
     # Fetch initial data
