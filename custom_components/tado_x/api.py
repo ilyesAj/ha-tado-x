@@ -804,6 +804,10 @@ class TadoXApi:
         Args:
             zone_id: Zone ID (for Tado X this equals the room ID).
             date_str: Date in YYYY-MM-DD format.
+
+        Raises:
+            TadoXApiError: on error, including 403 accessDenied when the account
+                has no Auto-Assist (Premium) subscription.
         """
         if not self._home_id:
             raise TadoXApiError("Home ID not set")

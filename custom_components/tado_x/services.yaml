@@ -172,18 +172,19 @@ set_schedule:
     schedule:
       name: Schedule blocks
       description: >-
-        JSON array of schedule blocks. Each block: {"dayType": "MONDAY_TO_SUNDAY",
-        "start": "07:00", "end": "09:00", "geolocationOverride": false,
-        "setting": {"type": "HEATING", "power": "ON", "temperature": {"value": 21.0}}}
+        JSON array of schedule blocks. Each block: {"dayType": "MONDAY",
+        "start": "07:00", "end": "09:00", "setting": {"power": "ON",
+        "temperature": {"value": 21.0}}}. "power" is ON or OFF; "temperature"
+        may be null when power is OFF.
       required: true
-      example: '[{"dayType":"MONDAY_TO_SUNDAY","start":"07:00","end":"09:00","setting":{"type":"HEATING","power":"ON","temperature":{"value":21.0}}}]'
+      example: '[{"dayType":"MONDAY","start":"07:00","end":"09:00","setting":{"power":"ON","temperature":{"value":21.0}}}]'
       selector:
         text:
           multiline: true
 
 get_day_report:
   name: Get day report
-  description: Read historical temperature, humidity and heating data for a room and date. Returns the report and a summary as a response.
+  description: Read historical temperature, humidity and heating data for a room and date. Returns the report and a summary as a response. Requires an Auto-Assist (Premium) subscription.
   target:
     entity:
       integration: tado_x
