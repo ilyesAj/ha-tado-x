@@ -184,7 +184,7 @@ set_schedule:
 
 get_day_report:
   name: Get day report
-  description: Read historical temperature, humidity and heating data for a room and date. Returns the report and a summary as a response. Requires an Auto-Assist (Premium) subscription.
+  description: Read historical temperature, humidity and heating data for a room and date. Returns the report and a summary as a response. Today's data works on all tiers; past days require an Auto-Assist (Premium) subscription.
   target:
     entity:
       integration: tado_x

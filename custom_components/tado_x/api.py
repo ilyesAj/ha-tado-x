@@ -806,8 +806,8 @@ class TadoXApi:
             date_str: Date in YYYY-MM-DD format.
 
         Raises:
-            TadoXApiError: on error, including 403 accessDenied when the account
-                has no Auto-Assist (Premium) subscription.
+            TadoXApiError: on error, including 403 accessDenied for past days
+                when the account has no Auto-Assist (Premium) subscription.
         """
         if not self._home_id:
             raise TadoXApiError("Home ID not set")
@@ -920,88 +920,105 @@ class TadoXApi:
 def summarize_day_report(report: dict[str, Any]) -> dict[str, Any]:
     """Reduce a raw dayReport to a compact temperature/humidity/heating summary.
 
-    The dayReport endpoint returns 15-minute ``dataIntervals`` buckets. This
-    flattens them into single values for template/automation use.
+    The dayReport returns two series shapes: ``dataPoints`` (timestamp + value,
+    used for insideTemperature and humidity) and ``dataIntervals`` (from/to +
+    value, used for callForHeat / settings / stripes). Both are flattened here.
     """
-    def _values(series: dict[str, Any] | None, key: str) -> list[float]:
+
+    def _series_values(series: dict[str, Any] | None, value_key: str | None) -> list[float]:
         out: list[float] = []
+        for point in (series or {}).get("dataPoints") or []:
+            value = point.get("value")
+            if value_key and isinstance(value, dict):
+                value = value.get(value_key)
+            if isinstance(value, (int, float)):
+                out.append(float(value))
         for interval in (series or {}).get("dataIntervals") or []:
-            value = interval.get("value") or {}
-            v = value.get(key)
-            if isinstance(v, (int, float)):
-                out.append(float(v))
+            value = interval.get("value")
+            if value_key and isinstance(value, dict):
+                value = value.get(value_key)
+            if isinstance(value, (int, float)):
+                out.append(float(value))
         return out
 
     def _avg(vals: list[float]) -> float | None:
         return round(sum(vals) / len(vals), 1) if vals else None
 
+    def _interval_hours(interval: dict[str, Any]) -> float:
+        try:
+            start = datetime.fromisoformat(interval["from"].replace("Z", "+00:00"))
+            end = datetime.fromisoformat(interval["to"].replace("Z", "+00:00"))
+            return (end - start).total_seconds() / 3600.0
+        except (KeyError, TypeError, ValueError):
+            return 0.0
+
     measured = report.get("measuredData") or {}
-    strip = report.get("stripData") or {}
 
-    temps = _values(measured.get("insideTemperature"), "celsius")
-    humidities = _values(measured.get("humidity"), "percentage")
-    heating = _values(strip.get("heatingPower"), "percentage")
+    temps = _series_values(measured.get("insideTemperature"), "celsius")
+    # dayReport humidity values are 0.0-1.0 fractions despite valueType "percentage"
+    hums_pct = [round(h * 100, 1) for h in _series_values(measured.get("humidity"), None)]
 
-    # Heating hours: sum(interval_hours * power/100) over heatingPower intervals.
+    # Heating time: callForHeat marks actual boiler demand ("HEATING" vs "NONE");
+    # fall back to the scheduled settings (power == "ON") when absent.
     heating_hours: float | None = None
-    intervals = (strip.get("heatingPower") or {}).get("dataIntervals") or []
-    if intervals:
-        total = 0.0
-        for interval in intervals:
-            try:
-                start = datetime.fromisoformat(interval["from"].replace("Z", "+00:00"))
-                end = datetime.fromisoformat(interval["to"].replace("Z", "+00:00"))
-                power = (interval.get("value") or {}).get("percentage", 0) or 0
-                total += (end - start).total_seconds() / 3600.0 * power / 100.0
-            except (KeyError, TypeError, ValueError):
-                continue
-        heating_hours = round(total, 1)
+    call_for_heat = (report.get("callForHeat") or {}).get("dataIntervals") or []
+    if call_for_heat:
+        heating_hours = round(
+            sum(_interval_hours(iv) for iv in call_for_heat if iv.get("value") != "NONE"),
+            1,
+        )
+    else:
+        settings = (report.get("settings") or {}).get("dataIntervals") or []
+        if settings:
+            heating_hours = round(
+                sum(
+                    _interval_hours(iv)
+                    for iv in settings
+                    if (iv.get("value") or {}).get("power") == "ON"
+                ),
+                1,
+            )
 
     return {
         "temperature_avg": _avg(temps),
         "temperature_min": round(min(temps), 1) if temps else None,
         "temperature_max": round(max(temps), 1) if temps else None,
-        "humidity_avg": _avg(humidities),
+        "humidity_avg": _avg(hums_pct),
         "heating_hours": heating_hours,
-        "heating_power_avg": _avg(heating),
     }
 
 
 if __name__ == "__main__":
+    # Self-check against the live dayReport shape.
     _sample = {
         "measuredData": {
             "insideTemperature": {
-                "dataIntervals": [
-                    {"from": "2026-10-13T00:00:00Z", "to": "2026-10-13T00:15:00Z",
-                     "value": {"celsius": 19.0, "type": "INSIDE_TEMPERATURE"}},
-                    {"from": "2026-10-13T00:15:00Z", "to": "2026-10-13T00:30:00Z",
-                     "value": {"celsius": 21.0, "type": "INSIDE_TEMPERATURE"}},
+                "dataPoints": [
+                    {"timestamp": "2026-10-13T00:00:00Z", "value": {"celsius": 19.0}},
+                    {"timestamp": "2026-10-13T00:15:00Z", "value": {"celsius": 21.0}},
                 ]
             },
             "humidity": {
-                "dataIntervals": [
-                    {"from": "2026-10-13T00:00:00Z", "to": "2026-10-13T00:15:00Z",
-                     "value": {"percentage": 50.0, "type": "HUMIDITY"}},
-                    {"from": "2026-10-13T00:15:00Z", "to": "2026-10-13T00:30:00Z",
-                     "value": {"percentage": 55.0, "type": "HUMIDITY"}},
+                "dataPoints": [
+                    {"timestamp": "2026-10-13T00:00:00Z", "value": 0.60},
+                    {"timestamp": "2026-10-13T00:15:00Z", "value": 0.728},
                 ]
             },
         },
-        "stripData": {
-            "heatingPower": {
-                "dataIntervals": [
-                    {"from": "2026-10-13T00:00:00Z", "to": "2026-10-13T01:00:00Z",
-                     "value": {"percentage": 100.0, "type": "HEATING"}},
-                ]
-            }
+        "callForHeat": {
+            "dataIntervals": [
+                {"from": "2026-10-13T00:00:00Z", "to": "2026-10-13T01:00:00Z", "value": "HEATING"},
+                {"from": "2026-10-13T01:00:00Z", "to": "2026-10-13T02:00:00Z", "value": "NONE"},
+            ]
         },
     }
     _summary = summarize_day_report(_sample)
     assert _summary["temperature_avg"] == 20.0, _summary
     assert _summary["temperature_min"] == 19.0, _summary
     assert _summary["temperature_max"] == 21.0, _summary
-    assert _summary["humidity_avg"] == 52.5, _summary
+    assert _summary["humidity_avg"] == 66.4, _summary
     assert _summary["heating_hours"] == 1.0, _summary
-    assert _summary["heating_power_avg"] == 100.0, _summary
+    # empty report returns all-None
+    assert summarize_day_report({})["temperature_avg"] is None
     print("summarize_day_report OK:", _summary)
 
