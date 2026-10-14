@@ -301,6 +301,10 @@ class TadoXDataUpdateCoordinator(DataUpdateCoordinator[TadoXData]):
                 heating_power_data = room_data.get("heatingPower") or {}
                 connection_data = room_data.get("connection") or {}
 
+                # Carry over the on-demand schedule (set by the refresh button
+                # or set_schedule) so it survives this periodic refresh.
+                prev_room = self.data.rooms.get(room_id) if self.data else None
+
                 room = TadoXRoom(
                     room_id=room_id,
                     name=room_data.get("name", f"Room {room_id}"),
@@ -317,6 +321,7 @@ class TadoXDataUpdateCoordinator(DataUpdateCoordinator[TadoXData]):
                     open_window_detected=room_data.get("openWindow") is not None,
                     next_schedule_change=next_change_time,
                     next_schedule_temperature=next_change_temp,
+                    schedule=prev_room.schedule if prev_room else [],
                 )
 
                 # Add devices for this room

@@ -451,6 +451,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             raise HomeAssistantError("schedule must be a JSON list of blocks")
         try:
             await coordinator.api.set_zone_schedule(room_id, day_type, day_schedule)
+            room = coordinator.data.rooms.get(room_id)
+            if room:
+                room.schedule = [
+                    block
+                    for block in room.schedule
+                    if block.get("dayType") != day_type
+                ] + [{**block, "dayType": day_type} for block in day_schedule]
             await coordinator.async_request_refresh()
             _LOGGER.info("Schedule updated for room %s (%s)", room_id, day_type)
         except TadoXApiError as err:
