@@ -1,20 +1,21 @@
 """The Tado X integration."""
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime
-from typing import Final
+from typing import Any, Final
 
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_DEVICE_ID, Platform
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady, HomeAssistantError
-from homeassistant.helpers import config_validation as cv, device_registry as dr
+from homeassistant.helpers import config_validation as cv, device_registry as dr, entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .api import TadoXApi, TadoXApiError, TadoXAuthError
+from .api import TadoXApi, TadoXApiError, TadoXAuthError, summarize_day_report
 from .const import (
     CONF_ACCESS_TOKEN,
     CONF_API_CALLS_TODAY,
@@ -56,6 +57,24 @@ ATTR_ENTITY_ID: Final = "entity_id"
 ATTR_TEMPERATURE: Final = "temperature"
 ATTR_DURATION: Final = "duration"
 
+SERVICE_GET_SCHEDULE: Final = "get_schedule"
+SERVICE_SET_SCHEDULE: Final = "set_schedule"
+SERVICE_GET_DAY_REPORT: Final = "get_day_report"
+ATTR_DAY_TYPE: Final = "day_type"
+ATTR_SCHEDULE: Final = "schedule"
+
+DAY_TYPE_OPTIONS: Final = [
+    "MONDAY",
+    "TUESDAY",
+    "WEDNESDAY",
+    "THURSDAY",
+    "FRIDAY",
+    "SATURDAY",
+    "SUNDAY",
+    "MONDAY_TO_FRIDAY",
+    "MONDAY_TO_SUNDAY",
+]
+
 # Service schemas
 SERVICE_SET_TEMPERATURE_OFFSET_SCHEMA = vol.Schema(
     {
@@ -96,6 +115,53 @@ SERVICE_SET_CLIMATE_TIMER_SCHEMA = vol.Schema(
         ),
     }
 )
+
+
+SERVICE_GET_SCHEDULE_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_ENTITY_ID): cv.entity_id,
+    }
+)
+
+SERVICE_SET_SCHEDULE_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_ENTITY_ID): cv.entity_id,
+        vol.Required(ATTR_DAY_TYPE): vol.In(DAY_TYPE_OPTIONS),
+        vol.Required(ATTR_SCHEDULE): cv.string,
+    }
+)
+
+SERVICE_GET_DAY_REPORT_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_ENTITY_ID): cv.entity_id,
+        vol.Optional(ATTR_DATE): cv.string,
+    }
+)
+
+
+def _extract_room_id(hass: HomeAssistant, entity_id: str) -> int:
+    """Extract the Tado X room_id from a climate entity's unique_id."""
+    entity_registry = er.async_get(hass)
+    entity_entry = entity_registry.async_get(entity_id)
+
+    if not entity_entry:
+        raise HomeAssistantError(f"Entity {entity_id} not found in registry")
+    if entity_entry.platform != DOMAIN:
+        raise HomeAssistantError(f"Entity {entity_id} is not a Tado X entity")
+    if not entity_entry.unique_id:
+        raise HomeAssistantError(f"Entity {entity_id} has no unique_id")
+
+    # unique_id format: "{home_id}_{room_id}_climate" (legacy: "{home_id}_{room_id}")
+    parts = entity_entry.unique_id.split("_")
+    try:
+        if len(parts) == 3 and parts[2] == "climate":
+            return int(parts[1])
+        if len(parts) == 2:
+            return int(parts[1])
+    except (ValueError, IndexError):
+        pass
+
+    raise HomeAssistantError(f"Could not extract room_id from entity {entity_id}")
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -331,40 +397,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         temperature = call.data[ATTR_TEMPERATURE]
         duration_minutes = call.data[ATTR_DURATION]
 
-        # Get the entity from registry
-        from homeassistant.helpers import entity_registry as er
-        entity_registry = er.async_get(hass)
-        entity_entry = entity_registry.async_get(entity_id)
-
-        if not entity_entry:
-            raise HomeAssistantError(f"Entity {entity_id} not found in registry")
-
-        # Verify this is a Tado X entity
-        if entity_entry.platform != DOMAIN:
-            raise HomeAssistantError(
-                f"Entity {entity_id} is not a Tado X entity (platform: {entity_entry.platform}). "
-                f"The set_climate_timer service only works with native Tado X climate entities."
-            )
-
-        if not entity_entry.unique_id:
-            raise HomeAssistantError(f"Entity {entity_id} has no unique_id")
-
         # Extract room_id from unique_id
-        # The unique_id for Tado X climate entities is "{home_id}_{room_id}_climate"
-        try:
-            parts = entity_entry.unique_id.split("_")
-            if len(parts) == 3 and parts[2] == "climate":
-                # Format: "12345_67_climate" where 12345 is home_id and 67 is room_id
-                room_id = int(parts[1])
-            elif len(parts) == 2:
-                # Legacy format: "12345_67" (backward compatibility)
-                room_id = int(parts[1])
-            else:
-                raise ValueError(f"Unexpected unique_id format: {entity_entry.unique_id}")
-        except (ValueError, IndexError) as err:
-            raise HomeAssistantError(
-                f"Could not extract room_id from entity {entity_id}: {err}"
-            ) from err
+        room_id = _extract_room_id(hass, entity_id)
 
         # Convert minutes to seconds
         duration_seconds = duration_minutes * 60
@@ -395,6 +429,72 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             SERVICE_SET_CLIMATE_TIMER,
             async_set_climate_timer,
             schema=SERVICE_SET_CLIMATE_TIMER_SCHEMA,
+        )
+
+    async def async_get_schedule(call: ServiceCall) -> dict[str, Any]:
+        """Return the current smart schedule for a room."""
+        room_id = _extract_room_id(hass, call.data[ATTR_ENTITY_ID])
+        try:
+            return await coordinator.api.get_zone_schedule(room_id)
+        except TadoXApiError as err:
+            raise HomeAssistantError(f"Failed to get schedule: {err}") from err
+
+    async def async_set_schedule(call: ServiceCall) -> None:
+        """Set the smart schedule blocks for a room."""
+        room_id = _extract_room_id(hass, call.data[ATTR_ENTITY_ID])
+        day_type = call.data[ATTR_DAY_TYPE]
+        try:
+            day_schedule = json.loads(call.data[ATTR_SCHEDULE])
+        except json.JSONDecodeError as err:
+            raise HomeAssistantError(f"Invalid schedule JSON: {err}") from err
+        if not isinstance(day_schedule, list):
+            raise HomeAssistantError("schedule must be a JSON list of blocks")
+        try:
+            await coordinator.api.set_zone_schedule(room_id, day_type, day_schedule)
+            await coordinator.async_request_refresh()
+            _LOGGER.info("Schedule updated for room %s (%s)", room_id, day_type)
+        except TadoXApiError as err:
+            raise HomeAssistantError(f"Failed to set schedule: {err}") from err
+
+    async def async_get_day_report(call: ServiceCall) -> dict[str, Any]:
+        """Return the historical day report for a room."""
+        room_id = _extract_room_id(hass, call.data[ATTR_ENTITY_ID])
+        report_date = call.data.get(ATTR_DATE) or datetime.now().date().isoformat()
+        try:
+            report = await coordinator.api.get_zone_day_report(room_id, report_date)
+        except TadoXApiError as err:
+            raise HomeAssistantError(f"Failed to get day report: {err}") from err
+        return {
+            "date": report_date,
+            "report": report,
+            "summary": summarize_day_report(report),
+        }
+
+    # Register schedule / historic data services (only once per integration)
+    if not hass.services.has_service(DOMAIN, SERVICE_GET_SCHEDULE):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_GET_SCHEDULE,
+            async_get_schedule,
+            schema=SERVICE_GET_SCHEDULE_SCHEMA,
+            supports_response=SupportsResponse.ONLY,
+        )
+
+    if not hass.services.has_service(DOMAIN, SERVICE_SET_SCHEDULE):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_SET_SCHEDULE,
+            async_set_schedule,
+            schema=SERVICE_SET_SCHEDULE_SCHEMA,
+        )
+
+    if not hass.services.has_service(DOMAIN, SERVICE_GET_DAY_REPORT):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_GET_DAY_REPORT,
+            async_get_day_report,
+            schema=SERVICE_GET_DAY_REPORT_SCHEMA,
+            supports_response=SupportsResponse.ONLY,
         )
 
     # Create the "Home" device before loading platforms to ensure via_device references work
