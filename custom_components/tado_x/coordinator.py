@@ -58,6 +58,8 @@ class TadoXRoom:
     devices: list[TadoXDevice] = field(default_factory=list)
     # Running times data (heating duration today)
     running_time_today_seconds: int = 0
+    # Smart schedule blocks (dayType, start, end, setting) when enabled
+    schedule: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -143,6 +145,7 @@ class TadoXDataUpdateCoordinator(DataUpdateCoordinator[TadoXData]):
         enable_air_comfort: bool = True,
         enable_running_times: bool = True,
         enable_flow_temp: bool = True,
+        enable_schedule: bool = True,
     ) -> None:
         """Initialize the coordinator."""
         # Determine scan interval based on subscription tier if not explicitly set
@@ -171,6 +174,7 @@ class TadoXDataUpdateCoordinator(DataUpdateCoordinator[TadoXData]):
         self.enable_air_comfort = enable_air_comfort
         self.enable_running_times = enable_running_times
         self.enable_flow_temp = enable_flow_temp
+        self.enable_schedule = enable_schedule
 
         _LOGGER.info(
             "Tado X coordinator initialized with %d second update interval (%s tier)",
@@ -178,8 +182,8 @@ class TadoXDataUpdateCoordinator(DataUpdateCoordinator[TadoXData]):
             "Auto-Assist" if api.has_auto_assist else "Free"
         )
         _LOGGER.info(
-            "Optional features - Weather: %s, Mobile devices: %s, Air comfort: %s, Running times: %s, Flow temp: %s",
-            enable_weather, enable_mobile_devices, enable_air_comfort, enable_running_times, enable_flow_temp
+            "Optional features - Weather: %s, Mobile devices: %s, Air comfort: %s, Running times: %s, Flow temp: %s, Schedule: %s",
+            enable_weather, enable_mobile_devices, enable_air_comfort, enable_running_times, enable_flow_temp, enable_schedule
         )
 
     def update_scan_interval(self, new_interval: int) -> None:
@@ -200,6 +204,8 @@ class TadoXDataUpdateCoordinator(DataUpdateCoordinator[TadoXData]):
             calls += 1
         if self.enable_running_times:
             calls += 1
+        if self.enable_schedule:
+            calls += 1  # approximate: one schedule fetch per room
         return calls
 
     async def _async_update_data(self) -> TadoXData:
@@ -434,6 +440,17 @@ class TadoXDataUpdateCoordinator(DataUpdateCoordinator[TadoXData]):
                     # Log warning but don't fail the entire update
                     _LOGGER.warning("Failed to fetch running times data: %s", err)
                     data.running_times = {}
+
+            # Fetch smart schedules per room (optional)
+            if self.enable_schedule:
+                for room_id, room in data.rooms.items():
+                    try:
+                        schedule = await self.api.get_zone_schedule(room_id)
+                        room.schedule = schedule.get("schedule", [])
+                    except Exception as err:
+                        _LOGGER.debug(
+                            "Failed to fetch schedule for room %s: %s", room_id, err
+                        )
 
             # Fetch air comfort data (optional)
             if self.enable_air_comfort:
