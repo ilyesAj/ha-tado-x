@@ -204,6 +204,16 @@ get_holiday_mode:
     Read the home's holiday mode settings (enabled, start/end dates and room
     settings). Returns the settings as a response. Requires an Auto-Assist
     (Premium) subscription.
+  fields:
+    home_id:
+      name: Home
+      description: >-
+        The Tado home to read. Optional — required only when multiple homes are
+        configured.
+      required: false
+      example: "123456"
+      selector:
+        text:
 
 set_holiday_mode:
   name: Set holiday mode
@@ -231,5 +241,14 @@ set_holiday_mode:
       description: ISO-8601 end date-time (e.g. 2027-01-05T20:00:00Z). Optional.
       required: false
       example: "2027-01-05T20:00:00Z"
+      selector:
+        text:
+    home_id:
+      name: Home
+      description: >-
+        The Tado home to control. Optional — required only when multiple homes
+        are configured.
+      required: false
+      example: "123456"
       selector:
         text:
